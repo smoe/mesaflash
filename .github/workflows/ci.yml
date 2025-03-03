@@ -1,3 +1,5 @@
+# vim: sw=2
+
 on:
   push:
   pull_request:
@@ -14,7 +16,8 @@ jobs:
       env:
         GITHUB_CONTEXT: ${{ toJson(github) }}
       run: echo "$GITHUB_CONTEXT"
-    - uses: actions/checkout@v2
+
+    - uses: actions/checkout@v4
 
     - name: Install deps
       run: |
@@ -22,14 +25,58 @@ jobs:
         sudo apt-get install -y eatmydata
         sudo eatmydata apt-get install -y --no-install-suggests --no-install-recommends build-essential devscripts equivs
         mk-build-deps -irs sudo -t "apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends -y"
+
     - name: Build
       run: |
         make -j$(nproc)
+
     - name: Clean
       run: |
         make clean
+
     - name: Build (package)
       run: |
         dch -l+`git rev-parse --short HEAD` "actions package build"
         debuild -b
 
+
+  test-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["buster", "bullseye", "stable", "testing", "unstable"]
+        cpu: ["i386", "amd64", "armhf", "aarch64"]
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install tools for dch update
+      run: |
+        sudo apt-get update
+        sudo apt install -y --no-install-suggests --no-install-recommends devscripts
+
+    - name: Update debian changelog
+      env:
+        OS_RELEASE: ${{ matrix.os }}
+      run: |
+        git checkout HEAD -- debian/changelog
+        git fetch --tags https://github.com/LinuxCNC/mesaflash
+        ref=`git describe --tags --always | sed -e 's/^release\///;s/^v//;s/-/+/g'`
+        DEBEMAIL=noreply@github.com dch -v "${ref}+${OS_RELEASE}-1" "Build from github actions"
+        head debian/changelog
+
+    - name: Build Debian package
+      uses: dawidd6/action-debian-package@v1.6.0
+      with:
+        source_directory: .
+        artifacts_directory: output
+        os_distribution: ${{ matrix.os }}
+        cpu_architecture: ${{ matrix.cpu }}
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        path: output
+        name: debs-${{ matrix.os }}-${{ matrix.cpu }}

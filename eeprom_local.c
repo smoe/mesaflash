@@ -412,16 +412,24 @@ static void done_programming(llio_t *self) {
 
 // global functions
 
-int local_write_flash(llio_t *self, char *bitfile_name, u32 start_address, int fix_boot_flag) {
+int local_write_flash(llio_t *self, char *bitfile_name, u32 start_address, int fix_boot_flag, int sha256_check_flag) {
     int ret;
 
-    ret = eeprom_write(self, bitfile_name, start_address, fix_boot_flag);
+    ret = eeprom_write(self, bitfile_name, start_address, fix_boot_flag, sha256_check_flag);
     done_programming(self);
     return ret;
 }
 
 int local_verify_flash(llio_t *self, char *bitfile_name, u32 start_address) {
     return eeprom_verify(self, bitfile_name, start_address);
+}
+
+int local_backup_flash(llio_t *self, char *bitfile_name) {
+    return flash_backup(self, bitfile_name);
+}
+
+int local_restore_flash(llio_t *self, char *bitfile_name) {
+    return flash_restore(self, bitfile_name);
 }
 
 void open_spi_access_local(llio_t *self) {

@@ -1,4 +1,80 @@
-mesaflash (3.4.0-1) stable; urgency=medium
+mesaflash (3.4.9-1) unstable; urgency=medium
+
+  * Add set ledmode option
+  * Add inverted txen pin printout to pktuart and sserial
+  * Merge pull request #77 from fangyaling/master
+  * Add check for new arch Loongarch64
+
+ -- Andy Pugh <andy@bodgesoc.org>  Sun, 15 Oct 2023 20:25:51 +0100
+
+mesaflash (3.4.8-1) unstable; urgency=medium
+
+  * Fix recover option for 6I24/6I25 (broken by name munging)
+  * Merge pull request #76 from sensille/litehm2
+  * Add MPG encoder names to inm module pins
+  * mesaflash: add first support for litehm2
+  * Add MX3660, MX4660 pinouts
+  * Add the period measurement module
+  * Add 5I25T reload support
+  * Forgot the PCI default FPGA type
+  * Add 7I80HDT,5I25T support
+  * Fix some typos in 7I97 and 7I95 pinouts
+
+ -- Peter C. Wallace <pcw@mesanet.com>  Wed, 19 Jul 2023 20:25:51 -0700
+
+mesaflash (3.4.7-1) unstable; urgency=medium
+
+  * Add 7I95T support, Fix boot jumper UP/UP meaning for Efinix
+  * Bugfix: Lengthen Efinix file header max path length
+  * Merge pull request #75 from LinuxCNC/fix-ci
+  * gitbug actions: add some whitespace to make the list more legible
+  * github actions: teach vim about shiftwidth in this file
+  * github actions: minor reorg
+  * github actions: bump actions/checkout version
+  * dch: add note that uploads are sponsored by Petter Reinholdtsen
+
+ -- Peter C. Wallace <pcw@mesanet.com>  Thu, 16 Feb 2023 20:25:51 -0700
+
+mesaflash (3.4.6-1) unstable; urgency=medium
+
+  * Add new Mesa boards: 7C81, 7I96S, 7I92T
+  * Add OutM and OneShoto module support.
+  * Add backup/restore for PCI cards.
+  * Add support for Efinix FPGAs.
+  * Show daughterboards better.
+  * Add --print-lio to show Local I/O pins.
+  * Add --version.
+  * Better manpage and --help info.
+  * Misc bugfixes.
+
+  * Upload sponsored by Petter Reinholdtsen.
+
+ -- Sebastian Kuzminsky <seb@highlab.com>  Sat, 05 Nov 2022 12:38:09 -0600
+
+mesaflash (3.4.2-1) unstable; urgency=medium
+
+  * Switch from openssl to libmd for sha256.
+
+  * Upload sponsored by Petter Reinholdtsen.
+
+ -- Sebastian Kuzminsky <seb@highlab.com>  Sun, 16 Jan 2022 09:47:57 -0700
+
+mesaflash (3.4.1-1) unstable; urgency=medium
+
+  * Add --backup-flash and --restore-flash command-line options.
+  * Add --sha256-check command-line option.
+  * Fix building on more platforms that lack sys/io.h.
+  * Add Homepage link, fix Source link.  Closes: #1001880
+
+ -- Sebastian Kuzminsky <seb@highlab.com>  Sat, 15 Jan 2022 12:38:11 -0700
+
+mesaflash (3.4.0-2) unstable; urgency=medium
+
+  * Revised d/copyright
+
+ -- Sebastian Kuzminsky <seb@highlab.com>  Sat, 20 Nov 2021 17:52:00 +0100
+
+mesaflash (3.4.0-1) UNRELEASED; urgency=medium
 
   * Cosmetics in preparation of upload to Debian.
   * Several bug fixes.
@@ -9,7 +85,7 @@ mesaflash (3.4.0-1) stable; urgency=medium
 
  -- LinuxCNC Developers <emc-developers@lists.sourceforge.net>  Mon, 27 Sep 2021 16:36:14 -0600
 
-mesaflash (3.4.0~pre1-1) stable; urgency=medium
+mesaflash (3.4.0~pre1-1) UNRELEASED; urgency=medium
 
   * Add a manpage.
   * Fix several compile warnings.
@@ -17,13 +93,13 @@ mesaflash (3.4.0~pre1-1) stable; urgency=medium
 
  -- LinuxCNC Developers <emc-developers@lists.sourceforge.net>  Fri, 22 May 2020 10:30:23 -0600
 
-mesaflash (3.4.0~pre0-1) stable; urgency=medium
+mesaflash (3.4.0~pre0-1) UNRELEASED; urgency=medium
 
   * mesaflash is now maintained by the LinuxCNC organization.
 
  -- LinuxCNC Developers <emc-developers@lists.sourceforge.net>  Thu, 23 Apr 2020 10:34:49 -0600
 
-mesaflash (3.3.0~pre0+dfsg-0) stable; urgency=low
+mesaflash (3.3.0~pre0+dfsg-0) UNRELEASED; urgency=low
 
   * support Mesa 7i93 ethernet board
   * support Mesa 7i96 ethernet board
@@ -32,13 +108,13 @@ mesaflash (3.3.0~pre0+dfsg-0) stable; urgency=low
 
  -- Sebastian Kuzminsky <seb@highlab.com>  Tue, 27 Jun 2017 21:52:31 -0600
 
-mesaflash (3.2.1) stable; urgency=low
+mesaflash (3.2.1) UNRELEASED; urgency=low
 
   * Fix some compile warnings and link issues on Debian Stretch.
 
  -- Sebastian Kuzminsky <seb@highlab.com>  Tue, 27 Jun 2017 10:25:59 -0600
 
-mesaflash (3.2.0) stable; urgency=low
+mesaflash (3.2.0) UNRELEASED; urgency=low
 
   * Don't check bitfile destinations while gpio recovering 6i24/6i25 boards
   * Use modules base address from module descriptor, not from regmap
@@ -52,7 +128,7 @@ mesaflash (3.2.0) stable; urgency=low
 
  -- Michael Geszkiewicz <micges@wp.pl>  27 Sep 2015 19:24:42 -0500
 
-mesaflash (3.1.0) stable; urgency=low
+mesaflash (3.1.0) UNRELEASED; urgency=low
 
   * First stable release.
   * Support 7i90HD under linux in SPI and rs422 mode
@@ -77,7 +153,7 @@ mesaflash (3.1.0) stable; urgency=low
 
  -- Michael Geszkiewicz <micges@wp.pl>  Sat, 24 Nov 2014 01:07:22 -0500
 
-mesaflash (3.0.0) stable; urgency=low
+mesaflash (3.0.0) UNRELEASED; urgency=low
 
   * Initial release.
 

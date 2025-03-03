@@ -67,6 +67,7 @@
 #define HM2_GTAG_DPAINTER          0x2A
 #define HM2_GTAG_XYMOD             0x2B
 #define HM2_GTAG_RCPWMGEN          0x2C
+#define HM2_GTAG_OUTM              0x2D
 #define HM2_GTAG_LIOPORT           0x40
 #define HM2_GTAG_LED               0x80
 #define HM2_GTAG_RESOLVER          0xC0
@@ -76,6 +77,8 @@
 #define HM2_GTAG_CPDRIVE           0xC4
 #define HM2_GTAG_DSAD              0xC5
 #define HM2_GTAG_SSERIALB          0xC6
+#define HM2_GTAG_ONESHOT           0xC7
+#define HM2_GTAG_PERIOD            0xC8
 
 
 // HM2 EEPROM SPI INTERFACE
@@ -301,21 +304,29 @@ typedef struct {
 # define BOB_7I74 18
 # define BOB_7I78 19
 # define BOB_7I85 20
-# define BOB_7I85S 20
-# define BOB_7I88 21
-# define BOB_7I89 22
-# define BOB_DMM4250 23
-# define BOB_5ABOB 24
-# define BOB_G540 25
-# define BOB_C11 26
-# define BOB_C11G 27
-# define BOB_7I33TA 28
-# define BOB_7I37TA 29
-# define BOB_7I44 30
-# define BOB_7I47 31
-# define BOB_7I47S 32
-# define BOB_7I48 33
-# define BOB_7I52 34
+# define BOB_7I85S 21
+# define BOB_7I88 22
+# define BOB_7I89 23
+# define BOB_DMM4250 24
+# define BOB_5ABOB 25
+# define BOB_G540 26
+# define BOB_C11 27
+# define BOB_C11G 28
+# define BOB_7I33TA 29
+# define BOB_7I37TA 30
+# define BOB_7I44 31
+# define BOB_7I47 32
+# define BOB_7I47S 33
+# define BOB_7I48 34
+# define BOB_7I52 35
+# define BOB_7I52S 36
+# define BOB_MX3660 37
+# define BOB_MX4660_1 38
+# define BOB_MX4660_2 39
+# define BOB_7I75 40
+# define BOB_BENEZAN 41
+# define BOB_HDR26 42
+
 
 
 

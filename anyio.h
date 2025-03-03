@@ -29,15 +29,22 @@ int anyio_init(board_access_t *access);
 void anyio_cleanup(board_access_t *access);
 int anyio_find_dev(board_access_t *access);
 board_t *anyio_get_dev(board_access_t *access, int board_number);
-int anyio_dev_write_flash(board_t *board, char *bitfile_name, int fallback_flag, int fix_boot_flag);
+int anyio_dev_write_flash(board_t *board, char *bitfile_name, int fallback_flag, int fix_boot_flag, int sha256_check_flag);
 int anyio_dev_verify_flash(board_t *board, char *bitfile_name, int fallback_flag);
+int anyio_dev_backup_flash(board_t *board, char *bitfile_name);
+int anyio_dev_restore_flash(board_t *board, char *bitfile_name);
 int anyio_dev_program_fpga(board_t *board, char *bitfile_name);
 int anyio_dev_set_remote_ip(board_t *board, char *lbp16_set_ip_addr);
+int anyio_dev_set_led_mode(board_t *board, char *lbp16_set_led_mode);
 int anyio_dev_reload(board_t *board, int fallback_flag);
 int anyio_dev_reset(board_t *board);
 void anyio_dev_print_hm2_info(board_t *board, int xml_flag);
 void anyio_dev_print_pin_descriptors(board_t *board);
+void anyio_dev_print_localio_descriptors(board_t *board);
+void anyio_dev_enable_all_module_outputs(board_t *board);
+void anyio_dev_safe_io(board_t *board);
 void anyio_dev_print_sserial_info(board_t *board);
 void anyio_bitfile_print_info(char *bitfile_name, int verbose_flag);
+void anyio_print_supported_board_names();
 
 #endif

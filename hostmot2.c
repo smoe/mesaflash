@@ -59,6 +59,10 @@ hm2_module_desc_t *hm2_find_module(hostmot2_t *hm2, u8 gtag) {
     return NULL;
 }
 
+// Note, this pin source function fails as the alt src register is not readable
+// so it ends up enabling all alt src on Xilinx and disabling all but the last on 
+// Efinix because non-readable pins read as 1 on Xilinx and 0 on Efinix) 
+// probably best fixed with a altsrc shadow register, later...
 void hm2_set_pin_source(hostmot2_t *hm2, u32 pin_number, u8 source) {
     u32 data;
     u16 addr;
@@ -74,16 +78,16 @@ void hm2_set_pin_source(hostmot2_t *hm2, u32 pin_number, u8 source) {
     }
 
     addr = md->base_address;
-    hm2->llio->read(hm2->llio, addr + HM2_MOD_OFFS_GPIO_ALT_SOURCE + (pin_number / 24)*4, &data, sizeof(data));
+    hm2->llio->read(hm2->llio, addr + HM2_MOD_OFFS_GPIO_ALT_SOURCE + (pin_number / hm2->idrom.io_width)*4, &data, sizeof(data));
     if (source == HM2_PIN_SOURCE_IS_PRIMARY) {
         data &= ~(1 << (pin_number % 24));
     } else if (source == HM2_PIN_SOURCE_IS_SECONDARY) {
-        data |= (1 << (pin_number % 24));
+        data |= (1 << (pin_number % hm2->idrom.io_width));
     } else {
         printf("hm2_set_pin_source(): invalid pin source 0x%02X\n", source);
         return;
     }
-    hm2->llio->write(hm2->llio, addr + HM2_MOD_OFFS_GPIO_ALT_SOURCE + (pin_number / 24)*4, &data, sizeof(data));
+    hm2->llio->write(hm2->llio, addr + HM2_MOD_OFFS_GPIO_ALT_SOURCE + (pin_number / hm2->idrom.io_width)*4, &data, sizeof(data));
 }
 
 void hm2_set_pin_direction(hostmot2_t *hm2, u32 pin_number, u8 direction) {
@@ -95,22 +99,54 @@ void hm2_set_pin_direction(hostmot2_t *hm2, u32 pin_number, u8 direction) {
         printf("hm2_set_pin_direction(): no IOPORT module found\n");
         return;
     }
-    if (pin_number >= (hm2->idrom.io_ports*hm2->idrom.io_width)) {
+    if (pin_number >= (hm2->idrom.io_ports*hm2->idrom.port_width)) {
         printf("hm2_set_pin_direction(): invalid pin number %d\n", pin_number);
         return;
     }
 
     addr = md->base_address;
-    hm2->llio->read(hm2->llio, addr + HM2_MOD_OFFS_GPIO_DDR + (pin_number / 24)*4, &data, sizeof(data));
+    hm2->llio->read(hm2->llio, addr + HM2_MOD_OFFS_GPIO_DDR + (pin_number / hm2->idrom.port_width)*4, &data, sizeof(data));
     if (direction == HM2_PIN_DIR_IS_INPUT) {
-        data &= ~(1 << (pin_number % 24));
+        data &= ~(1 << (pin_number % hm2->idrom.port_width));
     } else if (direction == HM2_PIN_DIR_IS_OUTPUT) {
-        data |= (1 << (pin_number % 24));
+        data |= (1 << (pin_number % hm2->idrom.port_width));
     } else {
         printf("hm2_set_pin_direction(): invalid pin direction 0x%02X\n", direction);
         return;
     }
-    hm2->llio->write(hm2->llio, addr + HM2_MOD_OFFS_GPIO_DDR + (pin_number / 24)*4, &data, sizeof(data));
+    hm2->llio->write(hm2->llio, addr + HM2_MOD_OFFS_GPIO_DDR + (pin_number / hm2->idrom.port_width)*4, &data, sizeof(data));
+}
+
+void hm2_enable_all_module_outputs(hostmot2_t *hm2) {
+    int num_pins;
+    u32 data =0xFFFFFFFF;
+    u16 addr;
+    // We write all alt src registers to 1's as this is a no-op on inputs so not harmfull
+    hm2_module_desc_t *md = hm2_find_module(hm2, HM2_GTAG_IOPORT);
+    addr = md->base_address;	
+    for (u32 i = 0; i < hm2->llio->hm2.idrom.io_ports; i ++) {  
+        hm2->llio->write(hm2->llio, addr + HM2_MOD_OFFS_GPIO_ALT_SOURCE + i*4, &data, sizeof(data));
+    }
+    num_pins = hm2->llio->hm2.idrom.io_ports * hm2->llio->hm2.idrom.port_width;
+    
+    for (int i = 0; i < num_pins; i ++) {
+        hm2_pin_desc_t *pd = &hm2->llio->hm2.pins[i];
+        if (pd->sec_pin & 0x80) {
+            hm2_set_pin_direction(hm2, i, HM2_PIN_DIR_IS_OUTPUT);
+        }
+    }
+}
+
+void hm2_safe_io(hostmot2_t *hm2) {
+    u32 data =0x00000000;
+    u16 addr;
+    // We write all alt src registers and DDR registers to 0 which is the startup I/O state
+    hm2_module_desc_t *md = hm2_find_module(hm2, HM2_GTAG_IOPORT);
+    addr = md->base_address;	
+    for (u32 i = 0; i < hm2->llio->hm2.idrom.io_ports; i ++) {  
+        hm2->llio->write(hm2->llio, addr + HM2_MOD_OFFS_GPIO_ALT_SOURCE + i*4, &data, sizeof(data));
+        hm2->llio->write(hm2->llio, addr +  HM2_MOD_OFFS_GPIO_DDR + i*4, &data, sizeof(data));
+    }
 }
 
 // PIN FILE GENERATING SUPPORT
@@ -132,7 +168,7 @@ static bob_pin_name_t bob_pin_names[MAX_BOB_NAMES] = {
     "TB4-2,3","TB4-4,5","TB4-8,9","TB4-10,11","TB2-14,15","TB4-16,17","Internal","TB4-20,21","TB4-22,23","Internal",
     "TB1-1,2,9,10","TB1-4,5,12,13","TB1-7,8,15,16","TB1-17,18 TB2-1,2","TB1-20,21 TB2-4,5","TB1-23,24,TB2-7,8",
     "TB2-9,10,17,18","TB2-11,12,20,21","TB2-15,16,23,24","Internal","Internal"}},
-   {BOB_7I95_1, {"Internal","Internal","Internal","Internal","Internal","TB3 13,14","TB3 15,16","TB3 17,18",
+   {BOB_7I95_1, {"Internal","Internal","Internal","Internal","Internal","TB3-13,14","TB3-15,16","TB3-17,18",
     "TB3-19,20","TB3-21,22","TB3-23,24","Internal","P1-01/DB25-01","P1-02/DB25-14","P1-03/DB25-02","P1-04/DB25-15",
     "P1-05/DB25-03","P1-06/DB25-16","P1-07/DB25-04","P1-08/DB25-17","P1-09/DB25-05","P1-11/DB25-06","P1-13/DB25-07",
     "P1-15/DB25-08","P1-17/DB25-09","P1-19/DB25-10","P1-21/DB25-11","P1-23/DB25-12","P1-25/DB25-13"}},
@@ -146,7 +182,7 @@ static bob_pin_name_t bob_pin_names[MAX_BOB_NAMES] = {
     "P1-15/DB25-08","P1-17/DB25-09","P1-19/DB25-10","P1-21/DB25-11","P1-23/DB25-12","P1-25/DB25-13"}},
 
    {BOB_7I97_0, {"TB3-4","TB3-8","TB3-12","TB3-16","TB3-20","TB3-20","TB3-24","TB3-24","TB3-4,8,12,16",
-    "TB1-1,2,9,10","TB1-4,5,12,13","TB1-7,8,15,16","TB1-17,18,TB2 1,2","TB1-20,21,TB2-4,5","TB1-23,24,TB2-7,8",
+    "TB1-1,2,9,10","TB1-4,5,12,13","TB1-7,8,15,16","TB1-17,18,TB2-1,2","TB1-20,21,TB2-4,5","TB1-23,24,TB2-7,8",
     "TB2-9,10,17,18","TB2-12,13,20,21"}},
    {BOB_7I97_1, {"TB2-15,16,23,24","Internal-EncMux","TB5-13,14","TB5-15,16","TB5-17,18","TB5-19,20","TB5-21,22",
     "TB5-23,24","Internal","Internal","Internal","Internal","Internal","Internal","TB4-15,16","TB4-17,18","Internal-TXEn"}},
@@ -179,6 +215,9 @@ static bob_pin_name_t bob_pin_names[MAX_BOB_NAMES] = {
     "TB2-23,24","TB2-12,13","Internal-TXEn","TB2-10,11","TB2-7,8","TB2-4,5","TB2-1,2"}},
 
    {BOB_7I85, {"TB1-19,20","TB1-21,22","TB1-11,12","TB1-13,14","TB1-3,4","TB1-5,6","TB2-19,20","TB2-21,22","TB2-11,12","TB2-13,14",
+    "Internal-EncMux","TB3-1,2,9,10","TB3-4,5,12,13","TB3-7,8,12,13","TB3-17,18,TB2-1,2","TB3-20,21,TB2-4,5","TB3-23,24,TB2-7,8"}},
+
+   {BOB_7I85S, {"TB1-19,20","TB1-21,22","TB1-11,12","TB1-13,14","TB1-3,4","TB1-5,6","TB2-19,20","TB2-21,22","TB2-11,12","TB2-13,14",
     "Internal-EncMux","TB3-1,2,9,10","TB3-4,5,12,13","TB3-7,8,12,13","TB3-17,18,TB2-1,2","TB3-20,21,TB2-4,5","TB3-23,24,TB2-7,8"}},
 
    {BOB_7I88, {"TB2-2,3","TB2-4,5","TB2-8,9","TB2-10,11","TB2-14,15","TB2-16,17","TB2-20,21","TB2-22,23","TB3-2,3","TB3-4,5",
@@ -222,7 +261,28 @@ static bob_pin_name_t bob_pin_names[MAX_BOB_NAMES] = {
     "P2-20:PWM-Up","P2-20:PWM-Dwn","P2-24:PWM-Up","P2-24:PWM-Dwn","/Ena1"}},
 
    {BOB_7I52, {"P2-5,6:/Ena","P5-1,2,9,10","P5-4,5,12,13","P5-7,8,15,16","P5-17,18,P4-1,2","P5-20,21,P4-4,5","P5-23,24,P4-7,8","P3-9,10,17,18","P3-12,13,20,21",
-    "P3-15,16,23,24","Internal-EncMux","P2-21,22","P2-19,20","P2-13,14","P2-11,12","P2-5,6","P2-3,4","P3-21,22","P3-19,20","P3-13,14","P3-11,12","P3-5,6","P3-3,4","P3-5,6:/Ena"}}
+    "P3-15,16,23,24","Internal-EncMux","P2-21,22","P2-19,20","P2-13,14","P2-11,12","P2-5,6","P2-3,4","P3-21,22","P3-19,20","P3-13,14","P3-11,12","P3-5,6","P3-3,4","P3-5,6:/Ena"}},
+
+   {BOB_7I52S, {"P2-5,6:/Ena","P5-1,2,9,10","P5-4,5,12,13","P5-7,8,15,16","P5-17,18,P4-1,2","P5-20,21,P4-4,5","P5-23,24,P4-7,8","P3-9,10,17,18","P3-12,13,20,21",
+    "P3-15,16,23,24","Internal-EncMux","P2-21,22","P2-19,20","P2-13,14","P2-11,12","P2-5,6","P2-3,4","P3-21,22","P3-19,20","P3-13,14","P3-11,12","P3-5,6","P3-3,4","P3-5,6:/Ena"}},
+
+   {BOB_MX3660, {"Output2","PWM","X-Step","Fault","X-Dir","Charge-Pump","Y-Step",
+    "Output1","Y-Dir","Z-Step","Z-Dir","Output3","Output4","Input1","Input2","Input3","Input4"}},
+
+   {BOB_MX4660_1, {"Output2","PWM","X-Step","Fault","X-Dir","Charge-Pump","Y-Step",
+    "Output1","Y-Dir","Z-Step","Z-Dir","A-Step","A-Dir","Input1","Input2","Input3","Input4"}},
+
+   {BOB_MX4660_2, {"Output6","NC","NC","NC","NC","NC","NC",
+    "Output5","NC","NC","NC","Output3","Output4","Input5","Input6","Input7","Input8"}},
+
+   {BOB_7I75, {"TB3-1","TB2-1","TB3-3","TB2-3","TB3-5","TB2-5","TB3-7","TB2-7","TB3-9","TB2-9",
+    "TB3-11","TB2-11","TB3-13","TB2-13","TB3-15","TB2-15","TB3-17"}},
+
+   {BOB_BENEZAN, {"Spindle/PWM/Relay1","Relay2","X-Dir","4th-Axis-Limit","X-Step","WD/Current-Reduce","Y-Dir",
+    "PWM/Current-Reduce","Y-Step","Z-Dir","Z-Step","4th-Axis-Dir","4th-axis-Step","Z-Limit","EStop","Y-Limit","X-Limit"}},
+
+   {BOB_HDR26, {"1","2","3","4","5","6","7","8",
+    "9","11","13","15","17","19","21","23","25"}},
 
 };
 
@@ -250,7 +310,7 @@ static struct {
     { BOB_7I74, "7I74" },
     { BOB_7I78, "7I78" },
     { BOB_7I85, "7I85" },
-    { BOB_7I85, "7I85S"},
+    { BOB_7I85S, "7I85S"},
     { BOB_7I88, "7I88"},
     { BOB_7I89, "7I89"},
     { BOB_DMM4250, "DMM4250"},
@@ -260,12 +320,19 @@ static struct {
     { BOB_C11G, "C11G"},
     { BOB_7I33TA, "7I33TA"},
     { BOB_7I37TA, "7I37TA"},
-    { BOB_7I47, "7I44"},
+    { BOB_7I44, "7I44"},
     { BOB_7I47, "7I47"},
     { BOB_7I47S, "7I47S"},
     { BOB_7I48, "7I48"},
     { BOB_7I52, "7I52"},
-    { BOB_7I52, "7I52S"},
+    { BOB_7I52S, "7I52S"},
+    { BOB_MX3660, "MX3660"},
+    { BOB_MX4660_1, "MX4660-1"},
+    { BOB_MX4660_2, "MX4660-2"},
+    { BOB_7I75, "7I75" },
+    { BOB_BENEZAN, "BENEZAN" },
+    { BOB_HDR26, "HDR26" },
+
     { -1, NULL },
 };
 
@@ -306,9 +373,18 @@ static pin_name_t pin_names[HM2_MAX_TAGS] = {
   {HM2_GTAG_LED,       {"Null1", "Null2", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_INMUX,     {"Addr0", "Addr1", "Addr2", "Addr3", "Addr4", "MuxData", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_SIGMA5,    {"TXData", "RXData", "TxEn", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
-  {HM2_GTAG_INM,       {"Input0", "Input1", "Input2", "Input3", "Input4", "Input5", "Input6", "Input7", "Input8"}}, 
+  {HM2_GTAG_INM,       {"Input0_EncA0", "Input1_EncB0", "Input2_EncA1", "Input3_EncB1", "Input4_EncA2", "Input5_EncB2",
+                        "Input6_EncA3", "Input7_EncB3", "Input8", "Input9", "Input10", "Input11", "Input12", 
+                        "Input13", "Input14", "Input15", "Input16", "Input17","Input18", "Input19", "Input20", 
+                        "Input21", "Input22", "Input23", "Input24", "Input25", "Input26","Input27", "Input28", "Input29", "Input30", "Input31"}},
+  {HM2_GTAG_OUTM,       {"Output0", "Output1", "Output2", "Output3", "Output4", "Output5", "Output6", "Output7", "Output8",
+  			"Output9", "Output10", "Output11", "Output12", "Output13", "Output14", "Output15", "Output16", "Output17",
+  			"Output18", "Output19", "Output20", "Output21", "Output22", "Output23", "Output24", "Output25", "Output26",
+   			"Output27", "Output28", "Output29", "Output30", "Output31"}},
   {HM2_GTAG_XYMOD,     {"XData", "YData", "Clk", "Sync", "Status", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_DPAINTER,  {"VidData", "VidClk", "Null3", "Null4", "Null5","Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_ONESHOT, {"Trigger1", "Trigger2","Out1", "Out2", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_PERIOD, {"Input", "Null2","Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
 };
 
 static pin_name_t pin_names_xml[HM2_MAX_TAGS] = {
@@ -330,8 +406,8 @@ static pin_name_t pin_names_xml[HM2_MAX_TAGS] = {
   {HM2_GTAG_BIN_OSC,  {"OscOut", "Null2", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_BIN_DMDMA,  {"Null1", "Null2", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_RESOLVER,  {"PwrEn", "PDMP", "PDMM", "ADChan0", "ADChan1", "ADChan2", "SPICS", "SPIClk", "SPIDI0", "SPIDI1"}},
-  {HM2_GTAG_SSERIAL,  {"RXData", "TXData", "TXEn", "TestPin", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
-  {HM2_GTAG_SSERIALB,  {"RXData", "TXData", "TXEn", "TestPin", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_SSERIAL,  {"RXData", "TXData", "TXEna", "NTXEna", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_SSERIALB,  {"RXData", "TXData", "TXEna", "NTXEna", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_TWIDDLER,  {"InBit", "IOBit", "OutBit", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_SSR,       {"Out", "AC Ref", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_SPI,      {"/Frame", "DOut", "SClk", "DIn", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
@@ -340,17 +416,27 @@ static pin_name_t pin_names_xml[HM2_MAX_TAGS] = {
   {HM2_GTAG_DPLL,     {"Sync", "DDSMSB", "FOut", "PostOut", "SyncToggle", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_SSI,      {"SClk", "SClkEn", "Din", "DAv", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_BISS,      {"Clk", "ClkEn", "Din", "DAv", "TData", "STime", "Null7", "Null8", "Null9", "Null10"}},
-  {HM2_GTAG_UART_TX,   {"TXData", "TXEna", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_UART_TX,   {"TXData", "TXEna", "NTXEna", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_UART_RX,   {"RXData", "Null2", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
-  {HM2_GTAG_PKTUART_TX,   {"TXData", "TXEna", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_PKTUART_TX,   {"TXData", "TXEna", "NTXEna", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_PKTUART_RX,   {"RXData", "Null2", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_TRAM,    {"Null1", "Null2", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_LED,      {"Null1", "Null2", "Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_INMUX, {"Addr0", "Addr1", "Addr2", "Addr3", "Addr4", "MuxData", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_SIGMA5, {"TXData", "RXData", "TxEn", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
-  {HM2_GTAG_INM,       {"Input0", "Input1", "Input2", "Input3", "Input4", "Input5", "Input6", "Input7", "Input8"}}, 
+  {HM2_GTAG_INM,       {"Input0", "Input1", "Input2", "Input3", "Input4", "Input5",
+                        "Input6", "Input7", "Input8", "Input9", "Input10", "Input11", "Input12", 
+                        "Input13", "Input14", "Input15", "Input16", "Input17","Input18", "Input19", "Input20", 
+                        "Input21", "Input22", "Input23", "Input24", "Input25", "Input26","Input27", "Input28", "Input29", "Input30", "Input31"}},
+  {HM2_GTAG_OUTM,       {"Output0", "Output1", "Output2", "Output3", "Output4", "Output5", "Output6", "Output7", "Output8",
+  			"Output9", "Output10", "Output11", "Output12", "Output13", "Output14", "Output15", "Output16", "Output17",
+  			"Output18", "Output19", "Output20", "Output21", "Output22", "Output23", "Output24", "Output25", "Output26",
+   			"Output27", "Output28", "Output29", "Output30", "Output31"}},
   {HM2_GTAG_XYMOD, {"XData", "YData", "Clk", "Sync", "Status", "Null6", "Null7", "Null8", "Null9", "Null10"}},
   {HM2_GTAG_DPAINTER, {"VidData", "VidClk", "Null3", "Null4", "Null5","Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_ONESHOT, {"Trigger1", "Trigger2","Out1", "Out2", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
+  {HM2_GTAG_PERIOD, {"Input", "Null2","Null3", "Null4", "Null5", "Null6", "Null7", "Null8", "Null9", "Null10"}},
+
 };
 
 static mod_name_t mod_names[HM2_MAX_TAGS] = {
@@ -391,9 +477,13 @@ static mod_name_t mod_names[HM2_MAX_TAGS] = {
     {"InMux",       HM2_GTAG_INMUX},
     {"Sigma5Enc",   HM2_GTAG_SIGMA5},
     {"InM",         HM2_GTAG_INM},
+    {"OutM",        HM2_GTAG_OUTM},
+    {"LocalIO",     HM2_GTAG_LIOPORT},
     {"BISS",        HM2_GTAG_BISS},
     {"XYMod",       HM2_GTAG_XYMOD},
     {"DataPainter",HM2_GTAG_DPAINTER},
+    {"OneShot",HM2_GTAG_ONESHOT},
+    {"Period",HM2_GTAG_PERIOD},
 };
 
 static mod_name_t mod_names_xml[HM2_MAX_TAGS] = {
@@ -434,9 +524,14 @@ static mod_name_t mod_names_xml[HM2_MAX_TAGS] = {
     {"InMux",       HM2_GTAG_INMUX},
     {"Sigma5Enc",   HM2_GTAG_SIGMA5},
     {"InM",         HM2_GTAG_INM},
+    {"OutM",        HM2_GTAG_OUTM},
+    {"LocalIO",     HM2_GTAG_LIOPORT},
     {"BISS",        HM2_GTAG_BISS},
     {"XYMod",       HM2_GTAG_XYMOD},
     {"DataPainter",HM2_GTAG_DPAINTER},
+    {"OneShot",HM2_GTAG_ONESHOT},
+    {"Period",HM2_GTAG_PERIOD},
+    
 };
 
 static char *find_module_name(int gtag, int xml_flag) {
@@ -489,7 +584,7 @@ static char *pin_get_pin_name(hm2_pin_desc_t *pin, int xml_flag) {
                 } else if ((pin->sec_pin & 0xF0) == 0x90) {
                     sprintf(buff, "%s%u", pin_names_ptr[i].name[2], chan);
                     return buff;
-                } else if (pin->sec_pin == 0xA1) {
+                } else if ((pin->sec_pin & 0xF0) == 0xA0) {
                     sprintf(buff, "%s%u", pin_names_ptr[i].name[3], chan);
                     return buff;
                 }
@@ -542,9 +637,12 @@ static char *pin_get_pin_name(hm2_pin_desc_t *pin, int xml_flag) {
                     snprintf(buff, sizeof(buff), "Data%d", pin->sec_pin - 0x01);
                 }
                 return buff;
-            } else if (pin->sec_tag == HM2_GTAG_INM) {
-                snprintf(buff, sizeof(buff), "Input%d", pin->sec_pin - 0x01);
-                return buff;
+            } else if (pin->sec_tag == HM2_GTAG_OUTM) {
+                if ((pin->sec_pin & 0x80) == 0x80) {
+                    // output pins
+                    snprintf(buff, sizeof(buff), "Output%d", pin->sec_pin - 0x81);
+                    return buff;
+                }
             } else {
                 sprintf(buff, "%s", pin_names_ptr[i].name[(pin->sec_pin & 0x0F) - 1]);
                 return buff;
@@ -596,9 +694,17 @@ void hm2_print_pin_file(llio_t *llio, int xml_flag) {
 
         printf("Configuration pin-out:\n");
         for (i = 0; i < llio->hm2.idrom.io_ports; i++) {
-            printf("\nIO Connections for %s\n", llio->ioport_connector_name[i]);
-            printf("Pin#                  I/O   Pri. func    Sec. func       Chan      Pin func        Pin Dir\n\n");
-            for (j = 0; j < llio->hm2.idrom.port_width; j++) {
+            if (llio->bob_hint[i] != 0) {
+            	printf("\nIO Connections for %s -> %s\n", llio->ioport_connector_name[i],bob_names[llio->bob_hint[i]-1].name );
+            } else {
+             	printf("\nIO Connections for %s\n", llio->ioport_connector_name[i]);
+				}	
+            if ((llio->hm2.idrom.port_width == 17) && (llio->bob_hint[i] == 0)) {
+                printf("DB25 pin#             I/O   Pri. func    Sec. func        Chan     Sec. Pin func   Sec. Pin Dir\n\n");
+ 		      } else {
+ 		          printf("Pin#                  I/O   Pri. func    Sec. func        Chan     Sec. Pin func   Sec. Pin Dir\n\n");
+            }     
+ 		      for (j = 0; j < llio->hm2.idrom.port_width; j++) {
                 hm2_pin_desc_t *pin = &(llio->hm2.pins[i*(llio->hm2.idrom.port_width) + j]);
                 int pin_nr;
 
@@ -613,12 +719,12 @@ void hm2_print_pin_file(llio_t *llio, int xml_flag) {
                         pin_nr = i*(llio->hm2.idrom.port_width) + j;
                         break;
                     default:
-			pin_nr = 0;
-			break;
+								pin_nr = 0;
+								break;
                 }
                 if (llio->bob_hint[i] != 0) {
                     printf("%-18s",bob_pin_names[llio->bob_hint[i]-1].name[j]); 
-		} else {
+					 } else {
                     printf("%2u                ", pin_nr);
                 }
                 printf("    %3u", i*(llio->hm2.idrom.port_width) + j);
@@ -746,6 +852,45 @@ void hm2_print_pin_descriptors(llio_t *llio) {
     }
 }
 
+void hm2_print_localio_descriptors (llio_t *llio) {
+    int i;
+    int lio_number;
+    i =  llio->hm2.idrom.io_ports * llio->hm2.idrom.port_width;
+    lio_number = 0;
+    while (llio->hm2.pins[i].gtag == HM2_GTAG_LIOPORT) { 
+        i++;
+        lio_number++;
+    }    
+    printf("%d HM2 Local Pin Descriptors:\n", lio_number);
+    i =  llio->hm2.idrom.io_ports * llio->hm2.idrom.port_width;
+    lio_number = 0;    
+    while (llio->hm2.pins[i].gtag == HM2_GTAG_LIOPORT) { 
+        hm2_pin_desc_t *pd = &llio->hm2.pins[i];
+        printf("    pin %d:\n", lio_number);
+        printf(
+            "        Primary Tag: 0x%02X (%s)\n",
+            pd->gtag,
+            find_module_name(pd->gtag, 0)
+        );
+        if (llio->hm2.pins[i].sec_tag != 0) {
+            printf(
+                "        Secondary Tag: 0x%02X (%s)\n",
+                llio->hm2.pins[i].sec_tag,
+                find_module_name(pd->sec_tag, 0)
+            );
+            printf("        Secondary Unit: 0x%02X\n", pd->sec_chan);
+            printf(
+                "        Secondary Pin: 0x%02X (%s, %s)\n",
+                pd->sec_pin,
+                pin_get_pin_name(pd, 0),
+                (pd->sec_pin & 0x80) ? "Output" : "Input"
+            );
+        }
+        i++;
+        lio_number++;
+    }
+}
+
 int hm2_find_bob_hint_by_name(const char *name) {
     for (size_t i=0; bob_names[i].name; i++) {
         if(strcasecmp(bob_names[i].name, name) == 0) {
@@ -753,5 +898,14 @@ int hm2_find_bob_hint_by_name(const char *name) {
         }
     }
     return 0;
+}
+
+void hm2_print_bob_hint_names() {
+    printf("Valid daughterboard names are:\n");
+    for (size_t i=0; bob_names[i].name; i++) {
+        printf("%10s,",bob_names[i].name);
+        if ((((i+1) % 6) == 0) & (i != 0)) { printf("\n"); };
+    }
+    printf("\n");
 }
 

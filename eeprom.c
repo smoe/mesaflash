@@ -21,6 +21,11 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
+#include <strings.h>
+#include <sha256.h>
+#include <stdbool.h>
+#include <linux/limits.h>
 #include "types.h"
 #include "eeprom.h"
 #include "eeprom_local.h"
@@ -120,22 +125,26 @@ int start_programming(llio_t *self, u32 start_address, int fsize) {
     struct timeval tv1, tv2;
 
     esectors = (fsize - 1) / SECTOR_SIZE;
-    if (board->fallback_support == 1) {
-        if (start_address == FALLBACK_ADDRESS) {
-            max_sectors = eeprom_calc_user_space(board->flash_id) / SECTOR_SIZE - 1;
-        } else {
-            max_sectors = eeprom_calc_user_space(board->flash_id) / SECTOR_SIZE;
-        }
+    if (board->fpga_type == FPGA_TYPE_EFINIX) {
+        max_sectors = eeprom_calc_user_space(board->flash_id) / SECTOR_SIZE;
     } else {
+        if (board->fallback_support == 1) {
+            if (start_address == XILINX_FALLBACK_ADDRESS) {
+                max_sectors = eeprom_calc_user_space(board->flash_id) / SECTOR_SIZE - 1;
+            } else {
+                max_sectors = eeprom_calc_user_space(board->flash_id) / SECTOR_SIZE;
+            }
+        } else {
         max_sectors = eeprom_get_flash_size(board->flash_id) / SECTOR_SIZE;
-    }
+        }
+    } 
     if (esectors > max_sectors) {
         printf("File Size too large to fit\n");
         return -1;
     }
-    printf("EEPROM sectors to write: %d, max sectors in area: %d\n", esectors + 1, max_sectors);
+    printf("FLASH memory sectors to write: %d, max sectors in area: %d\n", esectors + 1, max_sectors);
     sec_addr = start_address;
-    printf("Erasing EEPROM sectors starting from 0x%X...\n", (unsigned int) start_address);
+    printf("Erasing FLASH memory sectors starting from 0x%X...\n", (unsigned int) start_address);
     printf("  |");
     fflush(stdout);
     gettimeofday(&tv1, NULL);
@@ -154,7 +163,91 @@ int start_programming(llio_t *self, u32 start_address, int fsize) {
     return 0;
 }
 
-int eeprom_write(llio_t *self, char *bitfile_name, u32 start_address, int fix_boot_flag) {
+bool sha256_verify(const char *bitfile_name, bool verbose) {
+    int bytesread, i, j;
+    struct stat file_stat;
+    FILE *fp;
+    char sha256str[SHA256_DIGEST_LENGTH*2+1];
+    char sha256file_name[PATH_MAX];
+    unsigned char sha256in[SHA256_DIGEST_LENGTH];
+    unsigned char sha256bitfile[SHA256_DIGEST_LENGTH];
+    SHA256_CTX sha256ctx;
+
+    snprintf(sha256file_name, sizeof(sha256file_name), "%s.sha256", bitfile_name);
+
+    if (verbose) printf("Start integrity verification file '%s'\n", bitfile_name);
+
+    if (stat(sha256file_name, &file_stat) != 0) {
+        printf("Can't find checksum file '%s'\n", sha256file_name);
+        return 0;
+    }
+
+    if (file_stat.st_size < SHA256_DIGEST_LENGTH*2) {
+        printf("Checksum file size too small\n");
+        return 0;
+    }
+
+    fp = fopen(sha256file_name, "rt");
+    if (fp == NULL) {
+        printf("Can't open checksum file '%s': %s\n", sha256file_name, strerror(errno));
+        return 0;
+    }
+    fread(&sha256str, 1, SHA256_DIGEST_LENGTH*2, fp);
+    fclose(fp);
+
+    if (verbose) printf("Read checksum string from file '%s' ", sha256file_name);
+    for (i = 0, j = 0; i < SHA256_DIGEST_LENGTH*2; i+=2, j++) {
+        if (sscanf(&sha256str[i], "%2hhx", &sha256in[j]) != 1) {
+            printf("Error: not correct sha256 string\n");
+            return 0;
+        }
+    }
+
+    if (verbose) {
+        printf("OK,\nsha256: '");
+        for (i = 0; i < SHA256_DIGEST_LENGTH; i++) printf("%02x", sha256in[i]);
+        printf("'\n");
+    }
+
+    if (stat(bitfile_name, &file_stat) != 0) {
+        printf("Can't find file %s\n", bitfile_name);
+        return 0;
+    }
+
+    fp = fopen(bitfile_name, "rb");
+    if (fp == NULL) {
+        printf("Can't open file '%s': %s\n", bitfile_name, strerror(errno));
+        return 0;
+    }
+
+    if (verbose) printf("Calculate checksum for file '%s' ", bitfile_name);
+
+    SHA256_Init(&sha256ctx);
+    while (!feof(fp)) {
+        bytesread = fread(&file_buffer, 1, 8192, fp);
+        SHA256_Update(&sha256ctx, file_buffer, (unsigned long)bytesread);
+    }
+    fclose(fp);
+    SHA256_Final(sha256bitfile, &sha256ctx);
+
+    if (verbose) {
+        printf("OK,\nsha256: '");
+        for (i = 0; i < SHA256_DIGEST_LENGTH; i++) printf("%02x", sha256bitfile[i]);
+        printf("'\n");
+    }
+
+    if (verbose) printf("Compare sha256 hashes: ");
+    for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        if (sha256in[i] != sha256bitfile[i]) {
+            if (verbose) printf(" error!\n");
+            return 0;
+        }
+    }
+    if (verbose) printf("OK\n");
+    return 1;
+}
+
+int eeprom_write(llio_t *self, char *bitfile_name, u32 start_address, int fix_boot_flag, int sha256_check_flag) {
     board_t *board = self->board;
     int bytesread, i;
     u32 eeprom_addr;
@@ -163,16 +256,26 @@ int eeprom_write(llio_t *self, char *bitfile_name, u32 start_address, int fix_bo
     FILE *fp;
     struct timeval tv1, tv2;
 
+    if (sha256_check_flag) {
+        if (sha256_verify(bitfile_name, board->llio.verbose)) {
+            printf("Bitfile integrity verification passed\n");
+        } else {
+            printf("Bitfile integrity verification not passed\n");
+            return -1;
+        }
+    }
+
     if (stat(bitfile_name, &file_stat) != 0) {
-        printf("Can't find file %s\n", bitfile_name);
+        printf("Can't find bitfile %s\n", bitfile_name);
         return -1;
     }
 
     fp = fopen(bitfile_name, "rb");
     if (fp == NULL) {
-        printf("Can't open file %s: %s\n", bitfile_name, strerror(errno));
+        printf("Can't open bitfile %s: %s\n", bitfile_name, strerror(errno));
         return -1;
     }
+
     if (print_bitfile_header(fp, (char*) &part_name, board->llio.verbose) == -1) {
         fclose(fp);
         return -1;
@@ -186,8 +289,8 @@ int eeprom_write(llio_t *self, char *bitfile_name, u32 start_address, int fix_bo
             }
         }
     }
-// if board doesn't support fallback there is no boot block
-    if (board->fallback_support == 1) {
+// boot blocks are in Xilinx FPGA cards with fallback support
+    if ((board->fallback_support == 1) && (board->fpga_type == FPGA_TYPE_XILINX)) {
         if (check_boot(self) == -1) {
             if (fix_boot_flag) {
                 write_boot(self);
@@ -210,7 +313,7 @@ int eeprom_write(llio_t *self, char *bitfile_name, u32 start_address, int fix_bo
         fclose(fp);
         return -1;
     }
-    printf("Programming EEPROM sectors starting from 0x%X...\n", (unsigned int) start_address);
+    printf("Programming FLASH memory sectors starting from 0x%X...\n", (unsigned int) start_address);
     printf("  |");
     fflush(stdout);
     gettimeofday(&tv1, NULL);
@@ -240,7 +343,7 @@ int eeprom_write(llio_t *self, char *bitfile_name, u32 start_address, int fix_bo
 
 int eeprom_verify(llio_t *self, char *bitfile_name, u32 start_address) {
     board_t *board = self->board;
-    int bytesread, i, bindex;
+    int bytesread, i, bindex, all_flash;
     u32 eeprom_addr;
     char part_name[32];
     struct stat file_stat;
@@ -257,29 +360,35 @@ int eeprom_verify(llio_t *self, char *bitfile_name, u32 start_address) {
         printf("Can't open file %s: %s\n", bitfile_name, strerror(errno));
         return -1;
     }
-    if (print_bitfile_header(fp, (char*) &part_name, board->llio.verbose) == -1) {
-        fclose(fp);
-        return -1;
-    }
-    if (strchr(board->llio.fpga_part_number, '|') == NULL) {
-        if (strcmp(part_name, board->llio.fpga_part_number) != 0) {
-            printf("Error: wrong bitfile destination device: %s, should be %s\n", part_name, board->llio.fpga_part_number);
+
+    if (file_stat.st_size != eeprom_get_flash_size(board->flash_id)) {
+        if (print_bitfile_header(fp, (char*) &part_name, board->llio.verbose) == -1) {
             fclose(fp);
             return -1;
         }
-    }
-// if board doesn't support fallback there is no boot block
-    if (board->fallback_support == 1) {
-        if (check_boot(self) == -1) {
-            printf("Error: BootSector is invalid\n");
-            fclose(fp);
-            return -1;
-        } else {
-            printf("Boot sector OK\n");
+        if (strchr(board->llio.fpga_part_number, '|') == NULL) {
+            if (strcmp(part_name, board->llio.fpga_part_number) != 0) {
+                printf("Error: wrong bitfile destination device: %s, should be %s\n", part_name, board->llio.fpga_part_number);
+                fclose(fp);
+                return -1;
+            }
         }
+        // boot blocks are in Xilinx FPGA cards with fallback support
+        if ((board->fallback_support == 1) && (board->fpga_type == FPGA_TYPE_XILINX)) {
+            if (check_boot(self) == -1) {
+                printf("Error: BootSector is invalid\n");
+                fclose(fp);
+                return -1;
+            } else {
+                printf("Boot sector OK\n");
+            }
+        }
+    } else {
+        start_address = 0;
+        all_flash = 1;
     }
 
-    printf("Verifying EEPROM sectors starting from 0x%X...\n", (unsigned int) start_address);
+    printf("Verifying FLASH memory sectors starting from 0x%X...\n", (unsigned int) start_address);
     printf("  |");
     fflush(stdout);
     gettimeofday(&tv1, NULL);
@@ -308,7 +417,215 @@ int eeprom_verify(llio_t *self, char *bitfile_name, u32 start_address) {
         printf("  Verification time: %.2f seconds\n", (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
          (double) (tv2.tv_sec - tv1.tv_sec));
     }
-    printf("Board configuration verified successfully.\n");
+    if (all_flash == 1) {
+        printf("Board FLASH memory verified successfully.\n");
+    } else {
+        printf("Board configuration verified successfully.\n");
+    }
+    return 0;
+}
+
+int flash_backup(llio_t *self, char *bitfile_name) {
+    board_t *board = self->board;
+    uint i, page_num;
+    u32 eeprom_addr, eeprom_pages;
+    struct stat file_stat;
+    FILE *fp;
+    struct timeval tv1, tv2;
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char auto_name[33];
+    char bitfile_path[PATH_MAX-8];
+    SHA256_CTX sha256ctx;
+    unsigned char sha256out[SHA256_DIGEST_LENGTH];
+    char sha256str[SHA256_DIGEST_LENGTH*2+1];
+    char sha256file_path[PATH_MAX];
+
+    if (eeprom_get_flash_size(board->flash_id) == 0) {
+        printf("Unknown size FLASH memory on the %s board\n", board->llio.board_name);
+        return -1;
+    }
+
+    printf("Creating backup %s FLASH memory on the %s board:\n", eeprom_get_flash_type(board->flash_id), board->llio.board_name);
+
+    if (stat(bitfile_name, &file_stat) == 0) {
+        if (S_ISDIR(file_stat.st_mode)) {
+            strftime(auto_name, sizeof(auto_name), "_flash_backup_%d%m%y_%H%M%S.bin", t);
+            snprintf(bitfile_path, sizeof(bitfile_path), (bitfile_name[strlen(bitfile_name)-1] != '/') ? "%s/%s%s" : "%s%s%s", bitfile_name, board->llio.board_name, auto_name);
+            printf("Used auto naming backup file: '%s%s'\n", board->llio.board_name, auto_name);
+        } else {
+            printf("File '%s' already exist.\n", bitfile_name);
+            return -1;
+        }
+    } else {
+        snprintf(bitfile_path, sizeof(bitfile_path), "%s", bitfile_name);
+    }
+
+    fp = fopen(bitfile_path, "wb");
+    if (fp == NULL) {
+        printf("Can't create file '%s': %s\n", bitfile_path, strerror(errno));
+        return -1;
+    }
+
+    printf("Reading FLASH memory sectors starting from 0x0...\n");
+    printf("  |");
+    fflush(stdout);
+    gettimeofday(&tv1, NULL);
+    eeprom_addr = 0;
+    eeprom_pages = eeprom_get_flash_size(board->flash_id) / PAGE_SIZE;
+    page_num = 0;
+
+    SHA256_Init(&sha256ctx);
+
+    for (i = 0; i < eeprom_pages; i++) {
+        eeprom_access.read_page(self, eeprom_addr, &page_buffer);
+
+        fwrite(&page_buffer, 1, PAGE_SIZE, fp);
+        SHA256_Update(&sha256ctx, page_buffer, PAGE_SIZE);
+
+        eeprom_addr += PAGE_SIZE;
+        page_num++;
+        if(page_num == 32){
+            page_num = 0;
+            printf("R");
+            fflush(stdout);
+        }
+    }
+
+    fclose(fp);
+
+    SHA256_Final(sha256out, &sha256ctx);
+    for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        sprintf(sha256str + i * 2, "%02x", sha256out[i]);
+    }
+    printf("\n");
+    if (board->llio.verbose == 1) {
+        gettimeofday(&tv2, NULL);
+        printf("  Backup time: %.2f seconds\n", (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
+         (double) (tv2.tv_sec - tv1.tv_sec));
+    }
+    printf("FLASH memory backup file '%s' created successfully.\n", bitfile_path);
+
+    snprintf(sha256file_path, sizeof(sha256file_path), "%s.sha256", bitfile_path);
+    fp = fopen(sha256file_path, "wt");
+    if (fp == NULL) {
+        printf("Can't create file '%s': %s\n", sha256file_path, strerror(errno));
+        return -1;
+    }
+    fprintf(fp, "%s *./%s\n", sha256str, basename(bitfile_path));
+    fclose(fp);
+    printf("Checksum file '%s' created successfully,\n", sha256file_path);
+    printf("sha256: '%s'\n", sha256str);
+    return 0;
+}
+
+int flash_erase(llio_t *self) {
+    board_t *board = self->board;
+    u32 sec_addr;
+    int sector, max_sectors;
+    struct timeval tv1, tv2;
+    
+    max_sectors = eeprom_get_flash_size(board->flash_id) / SECTOR_SIZE;
+    printf("FLASH memory sectors to erase: %d\n", max_sectors);
+    sec_addr = 0;
+    printf("Erasing FLASH memory sectors starting from 0x0...\n");
+    printf("  |");
+    fflush(stdout);
+    gettimeofday(&tv1, NULL);
+    for (sector = 0; sector < max_sectors; sector++) {
+        eeprom_access.erase_sector(self, sec_addr);
+        sec_addr = sec_addr + SECTOR_SIZE;
+        printf("E");
+        fflush(stdout);
+    }
+    if (board->llio.verbose == 1) {
+        gettimeofday(&tv2, NULL);
+        printf("\n  Erasing time: %.2f seconds", (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
+         (double) (tv2.tv_sec - tv1.tv_sec));
+    }
+    printf("\n");
+    return 0;
+}
+
+int flash_restore(llio_t *self, char *bitfile_name) {
+    board_t *board = self->board;
+    int bytesread, i, max_sectors;
+    u32 eeprom_addr, eeprom_size;
+    struct stat file_stat;
+    FILE *fp;
+    struct timeval tv1, tv2;
+
+    if (eeprom_get_flash_size(board->flash_id) == 0) {
+        printf("Unknown size FLASH memory on the %s board\n", board->llio.board_name);
+        return -1;
+    }
+
+    printf("\nRestoring backup %s FLASH memory on the %s board:\n", eeprom_get_flash_type(board->flash_id), board->llio.board_name);
+
+    if (sha256_verify(bitfile_name, board->llio.verbose)) {
+        printf("Backup file integrity verification passed\n");
+    } else {
+        printf("Backup file integrity verification not passed\n");
+        return -1;
+    }
+
+    if (stat(bitfile_name, &file_stat) != 0) {
+        printf("Can't find backup file '%s'\n", bitfile_name);
+        return -1;
+    }
+
+    eeprom_size = eeprom_get_flash_size(board->flash_id);
+
+    if (file_stat.st_size > eeprom_size) {
+        printf("Backup file size too large for restore FLASH memory\n");
+        return -1;
+    }
+
+    if (file_stat.st_size < eeprom_size) {
+        printf("Backup file size too small for restore FLASH memory\n");
+        return -1;
+    }
+
+    fp = fopen(bitfile_name, "rb");
+    if (fp == NULL) {
+        printf("Can't open backup file '%s': %s\n", bitfile_name, strerror(errno));
+        return -1;
+    }
+
+    if (flash_erase(self) == -1) {
+        fclose(fp);
+        return -1;
+    }
+
+    max_sectors = eeprom_size / SECTOR_SIZE;
+    printf("FLASH memory sectors to write: %d\n", max_sectors);
+
+    printf("Programming FLASH memory sectors starting from 0x0...\n");
+    printf("  |");
+    fflush(stdout);
+    gettimeofday(&tv1, NULL);
+    eeprom_addr = 0;
+    //fseek(fp, 0, SEEK_SET);
+    while (!feof(fp)) {
+        bytesread = fread(&file_buffer, 1, 8192, fp);
+        i = 0;
+        while (i < bytesread) {
+            eeprom_access.write_page(self, eeprom_addr, &file_buffer[i]);
+            i += PAGE_SIZE;
+            eeprom_addr += PAGE_SIZE;
+        }
+        printf("W");
+        fflush(stdout);
+    }
+
+    fclose(fp);
+    printf("\n");
+    if (board->llio.verbose == 1) {
+        gettimeofday(&tv2, NULL);
+        printf("  Programming time: %.2f seconds\n", (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 +
+         (double) (tv2.tv_sec - tv1.tv_sec));
+    }
+    printf("Board FLASH memory writed successfully.\n");
     return 0;
 }
 

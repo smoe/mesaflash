@@ -25,6 +25,7 @@ CC = gcc
 RM = rm -f
 AR = ar
 RANLIB = ranlib
+PKG_CONFIG ?= pkg-config
 
 OWNERSHIP ?= --owner root --group root
 
@@ -46,26 +47,82 @@ CFLAGS ?= -O0 -g -Wall -Wextra -Werror
 CFLAGS += -std=c99
 
 ifeq ($(TARGET),linux)
-    $(shell which pkg-config > /dev/null)
+    $(shell which $(PKG_CONFIG) > /dev/null)
     ifeq ($(.SHELLSTATUS), 1)
         $(error "can't find pkg-config")
     endif
 
-    $(shell pkg-config --exists libpci > /dev/null)
+    $(shell $(PKG_CONFIG) --exists libpci > /dev/null)
     ifeq ($(.SHELLSTATUS), 1)
         $(error "pkg-config can't find libpci")
     endif
 
-    LIBPCI_CFLAGS := $(shell pkg-config --cflags libpci)
-    LIBPCI_LDFLAGS := $(shell pkg-config --libs libpci)
+    $(shell $(PKG_CONFIG) --exists libmd > /dev/null)
+    ifeq ($(.SHELLSTATUS), 1)
+        $(error "pkg-config can't find libmd")
+    endif
+
+    LIBPCI_CFLAGS := $(shell $(PKG_CONFIG) --cflags libpci)
+    LIBPCI_LDFLAGS := $(shell $(PKG_CONFIG) --libs libpci)
+    LIBMD_CFLAGS := $(shell $(PKG_CONFIG) --cflags libmd)
+    LIBMD_LDFLAGS := $(shell $(PKG_CONFIG) --libs libmd)
     BIN = mesaflash
-    LDFLAGS = -lm $(LIBPCI_LDFLAGS)
-    CFLAGS += -D_GNU_SOURCE $(LIBPCI_CFLAGS) -D_FILE_OFFSET_BITS=64
+    LDFLAGS = -lm $(LIBPCI_LDFLAGS) $(LIBMD_LDFLAGS)
+    CFLAGS += -D_GNU_SOURCE $(LIBPCI_CFLAGS) $(LIBMD_CFLAGS) -D_FILE_OFFSET_BITS=64
 
     UNAME_M := $(shell uname -m)
+
+    #
+    # A bunch of platforms lack `sys/io.h`, which means mesaflash builds
+    # without support for EPP or PCI cards.
+    #
+
     ifeq ($(UNAME_M),aarch64)
         MESAFLASH_IO ?= 0
     endif
+
+    ifeq ($(patsubst arm%,arm,$(UNAME_M)),arm)
+        ifeq ($(wildcard /usr/include/arm-linux-gnueabihf/asm/io.h),)
+            MESAFLASH_IO ?= 0
+        endif
+    endif
+
+    ifeq ($(UNAME_M),loongarch64)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(UNAME_M),parisc)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(UNAME_M),m68k)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(patsubst mips%,mips,$(UNAME_M)),mips)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(patsubst ppc%,ppc,$(UNAME_M)),ppc)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(UNAME_M),riscv64)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(patsubst s390%,s390,$(UNAME_M)),s390)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(UNAME_M),sh)
+        MESAFLASH_IO ?= 0
+    endif
+
+    ifeq ($(UNAME_M),sparc64)
+        MESAFLASH_IO ?= 0
+    endif
+
 endif
 
 ifeq ($(TARGET),windows)

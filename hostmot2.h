@@ -37,7 +37,7 @@ typedef struct {
 } sserial_device_t;
 
 #define HM2_MAX_TAGS     255
-#define MAX_BOB_NAMES 35 
+#define MAX_BOB_NAMES 42
 #define ANYIO_MAX_IOPORT_CONNECTORS 8
 
 typedef struct llio_struct llio_t;
@@ -53,8 +53,10 @@ typedef struct {
 struct llio_struct {
     int (*read)(llio_t *self, u32 addr, void *buffer, int size);
     int (*write)(llio_t *self, u32 addr, void *buffer, int size);
-    int (*write_flash)(llio_t *self, char *bitfile_name, u32 start_address, int fix_boot_flag);
+    int (*write_flash)(llio_t *self, char *bitfile_name, u32 start_address, int fix_boot_flag, int sha256_check_flag);
     int (*verify_flash)(llio_t *self, char *bitfile_name, u32 start_address);
+    int (*backup_flash)(llio_t *self, char *bitfile_name);
+    int (*restore_flash)(llio_t *self, char *bitfile_name);
     int (*program_fpga)(llio_t *self, char *bitfile_name);
     int (*reset)(llio_t *self);
     int (*reload)(llio_t *self, int fallback_flag);
@@ -74,7 +76,7 @@ struct llio_struct {
 
 typedef struct {
     u8 tag;
-    char *name[10];
+    char *name[32];
 } pin_name_t;
 
 typedef struct {
@@ -91,11 +93,15 @@ void hm2_read_idrom(hostmot2_t *hm2);
 hm2_module_desc_t *hm2_find_module(hostmot2_t *hm2, u8 gtag);
 void hm2_print_pin_file(llio_t *llio, int xml_flag);
 void hm2_print_pin_descriptors(llio_t *llio);
+void hm2_print_localio_descriptors(llio_t *llio);
+void hm2_enable_all_module_outputs(hostmot2_t *hm2);
+void hm2_safe_io(hostmot2_t *hm2);
 void hm2_set_pin_source(hostmot2_t *hm2, u32 pin_number, u8 source);
 void hm2_set_pin_direction(hostmot2_t *hm2, u32 pin_number, u8 direction);
 void sserial_module_init(llio_t *llio);
 
 int hm2_find_bob_hint_by_name(const char *arg);
+void hm2_print_bob_hint_names();
 
 #endif
 

@@ -761,6 +761,34 @@ static int pci_board_reload(llio_t *self, int fallback_flag) {
 
     return 0;
 }
+static int pci_efx_board_reload(llio_t *self, int fallback_flag) {
+    board_t *board = self->board;
+    u16 cmd_reg;
+    u32 bar0_reg;
+    u32 data[4] = {
+      0x0004,   // image number 0 + config enable
+      0x000C,   // image number 0 + config enable + start
+      0x0005,   // image number 1 + config enable
+      0x000D    // image number 1 + config enable + start
+    };
+
+    cmd_reg = pci_read_word(board->dev, PCI_COMMAND);
+    bar0_reg = pci_read_long(board->dev, PCI_BASE_ADDRESS_0);
+    if (fallback_flag == 1) {
+        pci_write(&(board->llio), HM2_ICAP_REG, &data[0], sizeof(u32));    
+        pci_write(&(board->llio), HM2_ICAP_REG, &data[1], sizeof(u32));    
+    } else {
+        pci_write(&(board->llio), HM2_ICAP_REG, &data[2], sizeof(u32));  
+        pci_write(&(board->llio), HM2_ICAP_REG, &data[3], sizeof(u32));  
+    }
+    printf("Waiting for FPGA configuration...");
+    sleep(2);
+    printf("OK\n");
+    pci_write_word(board->dev, PCI_COMMAND, cmd_reg);
+    pci_write_long(board->dev, PCI_BASE_ADDRESS_0, bar0_reg);
+
+    return 0;
+}
 
 static void pci_fix_bar_lengths(struct pci_dev *dev) {
 #ifdef _WIN32
@@ -902,16 +930,16 @@ void pci_boards_scan(board_access_t *access) {
             board_init_struct(board);
             if ((dev->vendor_id == VENDORID_XIO2001) && (dev->device_id == DEVICEID_XIO2001)) {
                 board->type = BOARD_PCI;
-                strcpy(board->llio.board_name, "6I25 (RECOVER)");
+                strcpy(board->llio.board_name, "RECOVER");
                 board->llio.num_ioport_connectors = 2;
                 board->llio.pins_per_connector = 17;
-                board->llio.ioport_connector_name[0] = "P3";
-                board->llio.ioport_connector_name[1] = "P2";
-                board->llio.fpga_part_number = "6slx9tqg144";
+                board->llio.ioport_connector_name[0] = "Unknown";
+                board->llio.ioport_connector_name[1] = "Unknown";
+                board->llio.ioport_connector_name[2] = "Unknown";
+                board->llio.fpga_part_number = "Unknown";
                 board->llio.num_leds = 2;
                 board->llio.write_flash = &local_write_flash;
                 board->llio.verify_flash = &local_verify_flash;
-
                 board->open = &pci_board_open;
                 board->close = &pci_board_close;
                 board->print_info = &pci_print_info;
@@ -932,7 +960,7 @@ void pci_boards_scan(board_access_t *access) {
     for (dev = pacc->devices; dev != NULL; dev = dev->next) {
         board = &boards[boards_count];
         board_init_struct(board);
-
+        board->fpga_type = FPGA_TYPE_XILINX;   
         if (dev->vendor_id == VENDORID_MESAPCI) {
             if (dev->device_id == DEVICEID_MESA4I74) {
                 board->type = BOARD_PCI;
@@ -948,6 +976,8 @@ void pci_boards_scan(board_access_t *access) {
                 board->llio.write = &pci_write;
                 board->llio.write_flash = &local_write_flash;
                 board->llio.verify_flash = &local_verify_flash;
+                board->llio.backup_flash = &local_backup_flash; 
+                board->llio.restore_flash = &local_restore_flash;
 
                 board->open = &pci_board_open;
                 board->close = &pci_board_close;
@@ -976,6 +1006,8 @@ void pci_boards_scan(board_access_t *access) {
                 board->llio.write_flash = &local_write_flash;
                 board->llio.verify_flash = &local_verify_flash;
                 board->llio.reload = &pci_board_reload;
+                board->llio.backup_flash = &local_backup_flash; 
+                board->llio.restore_flash = &local_restore_flash;
 
                 board->open = &pci_board_open;
                 board->close = &pci_board_close;
@@ -1003,6 +1035,38 @@ void pci_boards_scan(board_access_t *access) {
                 board->llio.write_flash = &local_write_flash;
                 board->llio.verify_flash = &local_verify_flash;
                 board->llio.reload = &pci_board_reload;
+                board->llio.backup_flash = &local_backup_flash; 
+                board->llio.restore_flash = &local_restore_flash;
+
+                board->open = &pci_board_open;
+                board->close = &pci_board_close;
+                board->print_info = &pci_print_info;
+                pci_fix_bar_lengths(dev);
+                board->mem_base = dev->base_addr[0] & PCI_ADDR_MEM_MASK;
+                board->len = dev->size[0];
+                board->dev = dev;
+                board->flash = BOARD_FLASH_HM2;
+                board->fallback_support = 1;
+                board->llio.verbose = access->verbose;
+
+                boards_count++;
+            } else if (dev->device_id == DEVICEID_MESA5I25T) {
+                board->type = BOARD_PCI;
+                board->fpga_type = FPGA_TYPE_EFINIX;   
+                strcpy(board->llio.board_name, "5I25T");
+                board->llio.num_ioport_connectors = 2;
+                board->llio.pins_per_connector = 17;
+                board->llio.ioport_connector_name[0] = "P3";
+                board->llio.ioport_connector_name[1] = "P2";
+                board->llio.fpga_part_number = "T20F256";
+                board->llio.num_leds = 2;
+                board->llio.read = &pci_read;
+                board->llio.write = &pci_write;
+                board->llio.write_flash = &local_write_flash;
+                board->llio.verify_flash = &local_verify_flash;
+                board->llio.reload = &pci_efx_board_reload;
+                board->llio.backup_flash = &local_backup_flash; 
+                board->llio.restore_flash = &local_restore_flash;
 
                 board->open = &pci_board_open;
                 board->close = &pci_board_close;
@@ -1031,6 +1095,8 @@ void pci_boards_scan(board_access_t *access) {
                 board->llio.write_flash = &local_write_flash;
                 board->llio.verify_flash = &local_verify_flash;
                 board->llio.reload = &pci_board_reload;
+                board->llio.backup_flash = &local_backup_flash; 
+                board->llio.restore_flash = &local_restore_flash;
 
                 board->open = &pci_board_open;
                 board->close = &pci_board_close;
@@ -1058,6 +1124,8 @@ void pci_boards_scan(board_access_t *access) {
                 board->llio.write_flash = &local_write_flash;
                 board->llio.verify_flash = &local_verify_flash;
                 board->llio.reload = &pci_board_reload;
+                board->llio.backup_flash = &local_backup_flash; 
+                board->llio.restore_flash = &local_restore_flash;
 
                 board->open = &pci_board_open;
                 board->close = &pci_board_close;

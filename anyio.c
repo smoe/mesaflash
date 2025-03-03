@@ -33,14 +33,26 @@ supported_board_entry_t supported_boards[] = {
     {"ETHER", BOARD_ETH | BOARD_WILDCARD},
     {"SPI", BOARD_SPI | BOARD_WILDCARD},
     {"7I92", BOARD_ETH},
+    {"7I92T", BOARD_ETH},
     {"7I93", BOARD_ETH},
     {"7I94", BOARD_ETH},
+    {"7I94T", BOARD_ETH},
     {"7I95", BOARD_ETH},
+    {"7I95T", BOARD_ETH},
     {"7I96", BOARD_ETH},
+    {"7I96S", BOARD_ETH},
     {"7I97", BOARD_ETH},
+    {"7I97T", BOARD_ETH},
     {"7I98", BOARD_ETH},
-    {"7I80", BOARD_ETH},
+    {"7I80HD-16", BOARD_ETH},
+    {"7I80HD-25", BOARD_ETH},
+    {"7I80DB-16", BOARD_ETH},
+    {"7I80DB-25", BOARD_ETH},
+    {"7I80HDT", BOARD_ETH},
     {"7I76E", BOARD_ETH},
+    {"7I76EU", BOARD_ETH},
+
+    {"LITEHM2", BOARD_ETH},
 
     {"4I74", BOARD_PCI},
     {"5I24", BOARD_PCI},
@@ -48,6 +60,7 @@ supported_board_entry_t supported_boards[] = {
     {"6I24", BOARD_PCI},
     {"6I25", BOARD_PCI},
     {"5I20", BOARD_PCI},
+    {"RECOVER", BOARD_PCI},
     {"4I65", BOARD_PCI},
     {"4I68", BOARD_PCI},
     {"5I21", BOARD_PCI},
@@ -59,7 +72,7 @@ supported_board_entry_t supported_boards[] = {
     {"7C80", BOARD_MULTI_INTERFACE | BOARD_EPP | BOARD_SPI},
     {"7C81", BOARD_MULTI_INTERFACE | BOARD_EPP | BOARD_SPI},
     {"7I43", BOARD_MULTI_INTERFACE | BOARD_EPP | BOARD_USB},
-    {"7I90", BOARD_MULTI_INTERFACE | BOARD_EPP | BOARD_SPI | BOARD_SER},
+    {"7I90HD", BOARD_MULTI_INTERFACE | BOARD_EPP | BOARD_SPI | BOARD_SER},
     {"7I64", BOARD_MULTI_INTERFACE | BOARD_USB | BOARD_SPI},
 
     {"AUTO", BOARD_MULTI_INTERFACE | BOARD_WILDCARD | BOARD_USB | BOARD_EPP | BOARD_SPI | BOARD_SER | BOARD_PCI},
@@ -106,7 +119,7 @@ int anyio_find_dev(board_access_t *access) {
     }
 
     for (i = 0; supported_boards[i].name != NULL; i++) {
-        if (strncmp(supported_boards[i].name, access->device_name, strlen(supported_boards[i].name)) == 0) {
+        if (strncmp(supported_boards[i].name, access->device_name, strlen(supported_boards[i].name)) == 0) { 
             supported_board = &supported_boards[i];
             break;
         }
@@ -114,6 +127,7 @@ int anyio_find_dev(board_access_t *access) {
 
     if (supported_board == NULL) {
         printf("ERROR: Unsupported device %s\n", access->device_name);
+        anyio_print_supported_board_names();
         return -1;
     }
 
@@ -219,7 +233,8 @@ board_t *anyio_get_dev(board_access_t *access, int board_number) {
     for (i = 0, j = 0; i < boards_count; i++) {
         board_t *board = NULL;
         board = &boards[i];
-        if (strncmp(access->device_name, board->llio.board_name, strlen(access->device_name)) == 0 || access->open_iface & BOARD_WILDCARD) {
+        if (((strncmp(access->device_name, board->llio.board_name, strlen(access->device_name)) == 0) &&
+        (strlen(access->device_name) == strlen(board->llio.board_name))) || access->open_iface & BOARD_WILDCARD) {
             j++;
             if (j == board_number) {
                 return board;
@@ -229,7 +244,7 @@ board_t *anyio_get_dev(board_access_t *access, int board_number) {
     return NULL;
 }
 
-int anyio_dev_write_flash(board_t *board, char *bitfile_name, int fallback_flag, int fix_boot_flag) {
+int anyio_dev_write_flash(board_t *board, char *bitfile_name, int fallback_flag, int fix_boot_flag, int sha256_check_flag) {
     int ret;
 
     if (board == NULL) {
@@ -239,9 +254,13 @@ int anyio_dev_write_flash(board_t *board, char *bitfile_name, int fallback_flag,
         u32 addr = board->flash_start_address;
 
         if (fallback_flag == 1) {
-            addr = FALLBACK_ADDRESS;
+            if (board->fpga_type == FPGA_TYPE_EFINIX) {
+					addr = EFINIX_FALLBACK_ADDRESS;
+            } else {
+ 					addr = XILINX_FALLBACK_ADDRESS;
+            }
         }
-        ret = board->llio.write_flash(&(board->llio), bitfile_name, addr, fix_boot_flag);
+        ret = board->llio.write_flash(&(board->llio), bitfile_name, addr, fix_boot_flag, sha256_check_flag);
     } else {
         printf("ERROR: Board %s doesn't support flash writing.\n", board->llio.board_name);
         return -EINVAL;
@@ -259,11 +278,45 @@ int anyio_dev_verify_flash(board_t *board, char *bitfile_name, int fallback_flag
         u32 addr = board->flash_start_address;
 
         if (fallback_flag == 1) {
-            addr = FALLBACK_ADDRESS;
-        }
+            if (board->fpga_type == FPGA_TYPE_EFINIX) {
+					addr = EFINIX_FALLBACK_ADDRESS;
+            } else {
+ 					addr = XILINX_FALLBACK_ADDRESS;
+            }
+         }   
         ret = board->llio.verify_flash(&(board->llio), bitfile_name, addr);
     } else {
         printf("ERROR: Board %s doesn't support flash verification.\n", board->llio.board_name);
+        return -EINVAL;
+    }
+    return ret;
+}
+
+int anyio_dev_backup_flash(board_t *board, char *bitfile_name) {
+    int ret;
+
+    if (board == NULL) {
+        return -EINVAL;
+    }
+    if (board->llio.backup_flash != NULL) {
+        ret = board->llio.backup_flash(&(board->llio), bitfile_name);
+    } else {
+        printf("ERROR: Board %s doesn't support backup flash.\n", board->llio.board_name);
+        return -EINVAL;
+    }
+    return ret;
+}
+
+int anyio_dev_restore_flash(board_t *board, char *bitfile_name) {
+    int ret;
+
+    if (board == NULL) {
+        return -EINVAL;
+    }
+    if (board->llio.restore_flash != NULL) {
+        ret = board->llio.restore_flash(&(board->llio), bitfile_name);
+    } else {
+        printf("ERROR: Board %s doesn't support restore flash.\n", board->llio.board_name);
         return -EINVAL;
     }
     return ret;
@@ -309,6 +362,23 @@ int anyio_dev_set_remote_ip(board_t *board, char *lbp16_set_ip_addr) {
     }
     return ret;
 }
+int anyio_dev_set_led_mode(board_t *board, char *lbp16_set_led_mode) {
+    int ret;
+
+    if (board == NULL) {
+        return -EINVAL;
+    }
+    if ((board->type & BOARD_ETH) == 0) {
+        return -EPERM;
+    }
+
+    ret = eth_set_led_mode(lbp16_set_led_mode);
+    if (ret == 0) {
+        printf("Board LED mode updated successfully.\n");
+        printf("You must power cycle board to load updated eeprom settings.\n");
+    }
+    return ret;
+}
 
 int anyio_dev_reload(board_t *board, int fallback_flag) {
     if (board == NULL) {
@@ -348,6 +418,14 @@ void anyio_dev_print_pin_descriptors(board_t *board) {
     hm2_print_pin_descriptors(&board->llio);
 }
 
+void anyio_dev_print_localio_descriptors(board_t *board) {
+    if (board == NULL) {
+        return;
+    }
+    hm2_read_idrom(&(board->llio.hm2));
+    hm2_print_localio_descriptors(&board->llio);
+}
+
 void anyio_dev_print_sserial_info(board_t *board) {
     if (board == NULL) {
         return;
@@ -371,3 +449,30 @@ void anyio_bitfile_print_info(char *bitfile_name, int verbose_flag) {
     print_bitfile_header(fp, (char*) &part_name, verbose_flag);
     fclose(fp);
 }
+
+void anyio_print_supported_board_names() {
+    printf("Supported card names are:\n");
+    for (size_t i=0; supported_boards[i].name != NULL; i++) {
+        printf("%10s,",supported_boards[i].name);
+        if ((((i+1) % 6) == 0) & (i != 0)) { printf("\n"); };
+    }   
+    printf("\n");     
+}
+
+void anyio_dev_enable_all_module_outputs(board_t *board) {
+    if (board == NULL) {
+        return;
+    }
+    hm2_read_idrom(&(board->llio.hm2));
+    hm2_enable_all_module_outputs(&(board->llio.hm2));
+}
+
+void anyio_dev_safe_io(board_t *board) {
+    if (board == NULL) {
+        return;
+    }
+    hm2_read_idrom(&(board->llio.hm2));
+    hm2_safe_io(&(board->llio.hm2));
+}
+
+

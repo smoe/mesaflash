@@ -32,7 +32,7 @@
 #endif
 
 #ifndef VERSION
-#define VERSION "3.4.0"
+#define VERSION "3.5.11"
 #endif
 
 static int device_flag;
@@ -41,12 +41,16 @@ static int addr_hi_flag;
 static int write_flag;
 static int fix_boot_flag;
 static int verify_flag;
+static int backup_flash_flag;
+static int restore_flash_flag;
+static int sha256_check_flag;
 static int auto_verify_flag = 1;
 static int fallback_flag;
 static int recover_flag;
 static int program_flag;
 static int readhmid_flag;
 static int print_pd_flag;
+static int print_lio_flag;
 static int reload_flag;
 static int reset_flag;
 static int sserial_flag;
@@ -60,8 +64,13 @@ static u16 rpo_addr;
 static u16 wpo_addr;
 static u32 wpo_data;
 static int set_flag;
+static int ipaddr_flag;
+static int ledmode_flag;
+static int enable_all_mod_flag;
+static int safe_io_flag;
 static int xml_flag;
 static char *lbp16_set_ip_addr;
+static char *lbp16_set_led_mode;
 static int info_flag;
 static int verbose_flag;
 static char bitfile_name[255];
@@ -78,11 +87,15 @@ static struct option long_options[] = {
     {"no-auto-verify", no_argument, &auto_verify_flag, 0},
     {"fix-boot-block", no_argument, &fix_boot_flag, 1},
     {"verify", required_argument, 0, 'v'},
+    {"backup-flash", required_argument, 0, 'f'},
+    {"restore-flash", required_argument, 0, 'n'},
+    {"sha256-check", no_argument, &sha256_check_flag, 1},
     {"fallback", no_argument, &fallback_flag, 1},
     {"recover", no_argument, &recover_flag, 1},
     {"program", required_argument, 0, 'p'},
     {"readhmid", no_argument, &readhmid_flag, 1},
     {"print-pd", no_argument, &print_pd_flag, 1},
+    {"print-lio", no_argument, &print_lio_flag, 1},
     {"reload", no_argument, &reload_flag, 1},
     {"reset", no_argument, &reset_flag, 1},
     {"sserial", no_argument, &sserial_flag, 1},
@@ -92,6 +105,8 @@ static struct option long_options[] = {
     {"serial", no_argument, &serial_flag, 1},
     {"rpo", required_argument, 0, 'r'},
     {"wpo", required_argument, 0, 'o'},
+    {"enable-all-mod", no_argument, &enable_all_mod_flag, 1},
+    {"safe-io", no_argument, &safe_io_flag, 1},
     {"set", required_argument, 0, 's'},
     {"xml", no_argument, &xml_flag, 1},
     {"dbname1", required_argument, NULL, '1'},
@@ -103,6 +118,7 @@ static struct option long_options[] = {
     {"info", required_argument, 0, 'i'},
     {"help", no_argument, 0, 'h'},
     {"verbose", no_argument, &verbose_flag, 1},
+    {"version", no_argument, 0, 'x'},
     {0, 0, 0, 0}
 };
 
@@ -112,12 +128,18 @@ void print_short_usage() {
     printf("Try 'mesaflash --help' for more information\n");
 }
 
+void print_version() {
+    printf("Mesaflash version %s\n", VERSION);
+}
+
 void print_usage() {
     printf("Syntax:\n");
     printf("  mesaflash --device device_name [options]\n");
     printf("  mesaflash --device device_name [options] --write filename\n");
     printf("  mesaflash --device device_name [options] --verify filename\n");
     printf("  mesaflash --device device_name [options] --program filename\n");
+    printf("  mesaflash --device device_name [options] --backup-flash filename | dirname\n");
+    printf("  mesaflash --device device_name [options] --restore-flash filename\n");
     printf("  mesaflash --device device_name [options] --readhmid\n");
     printf("  mesaflash --device device_name [options] --reload | --reset\n");
     printf("  mesaflash --device device_name [options] --sserial\n");
@@ -143,41 +165,59 @@ void print_usage() {
     printf("                    with multiple interfaces (7c80, 7c81, 7i43, 7i90, 7i64).\n");
     printf("  --serial          Use serial interface to connect to board, only for\n");
     printf("                    boards with multiple interfaces (7i43, 7i90, 7i64).\n");
-    printf("  --fallback        Use the fallback area of the EEPROM while executing\n");
+    printf("  --fallback        Use the fallback area of the FLASH memory while executing\n");
     printf("                    commands.\n");
     printf("  --recover         Access board using PCI bridge GPIO (currently\n");
-    printf("                    only 6I24/6I25).\n");
+    printf("                    only 6I24/6I25). Use --recover --device recover --write.\n");
     printf("  --xml             Format output from 'readhmid' command into XML.\n");
     printf("  --dbname# <name>  Set daughter board name to <name> for FPGA connector <N> \n");
-    printf("                    Allows readhmid to include daughterboard terminal names\n");
-    printf("                    where # can be in the range 1 to 6.\n");
-    printf("                    (1 means first FPGA connector)\n");
+    printf("                    Allows readhmid to include daughterboard terminal names,\n");
+    printf("                    where # can be in the range 1 to 6\n");
+    printf("                    (1 means first FPGA connector).\n");
     printf("  --verbose         Print detailed information while running commands.\n");
     printf("\n");
     printf("Commands:\n");
     printf("  --write           Writes a standard bitfile 'filename' configuration to\n");
-    printf("                    the userarea of the EEPROM (IMPORTANT! 'filename' must\n");
+    printf("                    the userarea of the FLASH (IMPORTANT! 'filename' must\n");
     printf("                    be VALID FPGA configuration file).\n");
     printf("  --fix-boot-block  If a write operation does not detect a valid boot\n");
     printf("                    block, write one.\n");
     printf("  --no-auto-verify  Don't automatically verify after writing.\n");
-    printf("  --verify          Verifies the EEPROM configuration against the\n");
+    printf("  --verify          Verifies the FLASH configuration against the\n");
     printf("                    bitfile 'filename'.\n");
     printf("  --program         Writes a standard bitfile 'filename' configuration to\n");
     printf("                    the FPGA (IMPORTANT! 'filename' must be VALID FPGA\n");
     printf("                    configuration file).\n");
+    printf("  --backup-flash    Backup all content the FLASH memory to the file 'filename'\n");
+    printf("                    or to the directory 'dirname' with auto naming dump file.\n");
+    printf("  --restore-flash   Restore all content the FLASH memory from a file 'filename'\n");
+    printf("                    (IMPORTANT! Can't use a dump file from different types\n");
+    printf("                    of boards. Unacceptable interrupt the restoring process.\n");
+    printf("                    If the restoring process was interrupted, do not turn off\n");
+    printf("                    the board power and do not reload board, and run restore\n");
+    printf("                    process again).\n");
+    printf("                    Required SHA256 checksum file 'filename.sha256'.\n");
+    printf("  --sha256-check    Integrity check FPGA configuration bitfile before writing.\n");
+    printf("                    Required SHA256 checksum file 'filename.sha256'.\n");
     printf("  --readhmid        Print hostmot2 configuration in PIN file format.\n");
     printf("  --print-pd        Print hostmot2 Pin Descriptors.\n");
+    printf("  --print-lio       Print hostmot2 local I/O pins.\n");
     printf("  --reload          Do full FPGA reload from flash (only Ethernet, SPI and\n");
     printf("                    PCI boards).\n");
     printf("  --reset           Do full firmware reset (only Ethernet and serial boards).\n");
     printf("  --sserial         Print full information about all sserial remote boards.\n");
-    printf("  --rpo             Read hostmot2 variable directly at 'address'.\n");
-    printf("  --wpo             Write hostmot2 variable directly at 'address'\n");
-    printf("                    with 'value'.\n");
-    printf("  --set             Set board IP address in eeprom to n.n.n.n (only\n");
+    printf("  --rpo addrs       Read hostmot2 register directly at 'addrs'.\n");
+    printf("  --wpo addrs=data  Write hostmot2 register directly at 'addrs'\n");
+    printf("                    with 'data'.\n");
+    printf("  --set ip=n.n.n.n  Set board IP address in EEPROM memory to n.n.n.n (Only\n");
     printf("                    Ethernet boards).\n");
-    printf("  --info            Print info about configuration in 'file_name'.\n");
+    printf("  --set ledmode=n   Set LED mode in EEPROM memory to n, 0 = Hostmot2, 1=Debug\n");
+    printf("                    Default debug is RX packet count. (Only Ethernet boards).\n");
+    printf("  --enable-all-mod  Enable all module outputs. For low level debugging\n");
+    printf("                    Note that this is NOT safe for cards connected to equipment\n");
+    printf("  --safe-io         Return all I/O to default power up state\n");
+    printf("  --info            Print info about configuration in 'filename'.\n");
+    printf("  --version         Print the version.\n");
     printf("  --help            Print this help message.\n");
 }
 
@@ -322,7 +362,15 @@ int process_cmd_line(int argc, char *argv[]) {
                     pch = strtok(optarg, "=");
                     pch = strtok(NULL, "=");
                     lbp16_set_ip_addr = pch;
-                } else {
+                    ipaddr_flag = 1;
+                } else if (strncmp(optarg, "ledmode=", 8) == 0) {
+                    char *pch;
+
+                    pch = strtok(optarg, "=");
+                    pch = strtok(NULL, "=");
+                    lbp16_set_led_mode = pch;
+                    ledmode_flag = 1;
+                } else {  
                     printf("Error: Unknown set command syntax, see --help for examples\n");
                     exit(-1);
                 }
@@ -345,6 +393,36 @@ int process_cmd_line(int argc, char *argv[]) {
             }
             break;
 
+            case 'f': {
+                if (backup_flash_flag > 0) {
+                    printf("Error: multiple --backup-flash options\n");
+                    exit(-1);
+                }
+                size_t len = strlen(optarg);
+                if (len+1 > sizeof(bitfile_name)) {
+                    printf("--backup-flash argument too long (max %zu)\n", sizeof(bitfile_name)-1);
+                    return 1;
+                }
+                strncpy(bitfile_name, optarg, 255);
+                backup_flash_flag++;
+            }
+            break;
+
+            case 'n': {
+                if (restore_flash_flag > 0) {
+                    printf("Error: multiple --restore-flash options\n");
+                    exit(-1);
+                }
+                size_t len = strlen(optarg);
+                if (len+1 > sizeof(bitfile_name)) {
+                    printf("--restore-flash argument too long (max %zu)\n", sizeof(bitfile_name)-1);
+                    return 1;
+                }
+                strncpy(bitfile_name, optarg, 255);
+                restore_flash_flag++;
+            }
+            break;
+
             case 'i': {
                 if (info_flag > 0) {
                     printf("Error: multiple --info options\n");
@@ -359,9 +437,15 @@ int process_cmd_line(int argc, char *argv[]) {
                 info_flag++;
             }
             break;
-
+ 
             case 'h': {
                 print_usage();
+                exit(0);
+            }
+            break;
+
+            case 'x': {
+                print_version();
                 exit(0);
             }
             break;
@@ -376,7 +460,9 @@ int process_cmd_line(int argc, char *argv[]) {
                 int bob_idx = c - '1';
                 int hint = hm2_find_bob_hint_by_name(optarg);
                 if (hint == 0) {
-                    printf("--dbname%c %s not recognized\n", c, optarg);
+                     printf("--dbname%c %s not recognized\n", c, optarg);
+                     hm2_print_bob_hint_names();
+                     exit(-1);
                 }
                 bob_hints[bob_idx] = hint;
             }
@@ -407,7 +493,6 @@ int process_cmd_line(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
     int ret = 0;
-
     if (argc == 1) {
         print_short_usage();
         return 0;
@@ -448,6 +533,8 @@ int main(int argc, char *argv[]) {
             anyio_dev_print_hm2_info(board, xml_flag);
         } else if (print_pd_flag == 1) {
             anyio_dev_print_pin_descriptors(board);
+        } else if (print_lio_flag == 1) {
+            anyio_dev_print_localio_descriptors(board);
         } else if (sserial_flag == 1) {
             anyio_dev_print_sserial_info(board);
         } else if (rpo_flag == 1) {
@@ -457,10 +544,16 @@ int main(int argc, char *argv[]) {
             printf("%08X\n", data);
         } else if (wpo_flag == 1) {
             board->llio.write(&(board->llio), wpo_addr, &wpo_data, sizeof(u32));
-        } else if (set_flag == 1) {
-            ret = anyio_dev_set_remote_ip(board, lbp16_set_ip_addr);
+        } else if (ipaddr_flag == 1) {
+                ret = anyio_dev_set_remote_ip(board, lbp16_set_ip_addr);
+        } else if (ledmode_flag == 1) {
+                ret = anyio_dev_set_led_mode(board, lbp16_set_led_mode);                
+        } else if (enable_all_mod_flag == 1) {
+                anyio_dev_enable_all_module_outputs(board);                
+        } else if (safe_io_flag == 1) {
+                anyio_dev_safe_io(board);                
         } else if (write_flag == 1) {
-            ret = anyio_dev_write_flash(board, bitfile_name, fallback_flag, fix_boot_flag);
+            ret = anyio_dev_write_flash(board, bitfile_name, fallback_flag, fix_boot_flag, sha256_check_flag);
             if (ret == 0) {
                 if (auto_verify_flag) {
                     ret = anyio_dev_verify_flash(board, bitfile_name, fallback_flag);
@@ -480,6 +573,15 @@ int main(int argc, char *argv[]) {
             }
         } else if (verify_flag == 1) {
             ret = anyio_dev_verify_flash(board, bitfile_name, fallback_flag);
+        } else if (backup_flash_flag == 1) {
+            ret = anyio_dev_backup_flash(board, bitfile_name);
+        } else if (restore_flash_flag == 1) {
+            ret = anyio_dev_restore_flash(board, bitfile_name);
+            if (ret == 0) {
+                if (auto_verify_flag) {
+                    ret = anyio_dev_verify_flash(board, bitfile_name, fallback_flag);
+                }
+            }
         } else if (program_flag == 1) {
             ret = anyio_dev_program_fpga(board, bitfile_name);
         } else if (reload_flag == 1) {

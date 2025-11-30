@@ -41,8 +41,15 @@ Depending on permissions and the types of devices you wish to access, you may ne
 
 Distributions
 ===============
-**mesaflash** package is available on [Fedora](https://src.fedoraproject.org/rpms/mesaflash) _(version 31 or newer)_ and can be simply installed by using:
+A _mesaflash_ package is available on
+
+* [**Fedora**](https://src.fedoraproject.org/rpms/mesaflash) _(version 31 or newer)_: To install simply use use
 ```
 # dnf install mesaflash
 ```
+* [**Debian**](https://qa.debian.org/popcon.php?package=mesaflash) and [Ubuntu](https://launchpad.net/ubuntu/+source/mesaflash): To install simply use
+```
+# apt install mesaflash
+```
+
 Availability of **mesaflash** for other Linux distributions can be checked on [release-monitoring](https://release-monitoring.org/project/105522/) project page.
